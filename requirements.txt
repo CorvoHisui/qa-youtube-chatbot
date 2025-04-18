@@ -4,3 +4,9 @@ openai
 youtube-transcript-api
 sentence-transformers
 python-dotenv
+streamlit
+langgraph
+langchain_openai
+langchain_community
+chromadb
+requests

@@ -7,10 +7,8 @@ from dotenv import load_dotenv
 from langchain_core.documents import Document
 from typing import Dict, Any, TypedDict
 from langchain.agents import AgentExecutor
-from langchain.agents import create_openai_functions_agent
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.tools import Tool
-from langchain.chains import RetrievalQA
+from langchain_openai import ChatOpenAI
+from agents.qa_agent import create_qa_agent
 
 # Load environment variables from .env file
 load_dotenv()
@@ -27,27 +25,6 @@ os.environ["LANGCHAIN_PROJECT"] = LANGCHAIN_PROJECT
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 os.environ["YOUTUBE_API_KEY"] = YOUTUBE_API_KEY
-
-# Import OpenAI
-from langchain_openai import ChatOpenAI
-
-def get_llm(provider="openai"):
-    """
-    Return an LLM instance based on the selected provider.
-    
-    Args:
-        provider (str): The LLM provider to use ('openai' or 'groq')
-        
-    Returns:
-        LLM: A language model instance
-    """
-    # Default to OpenAI since we're using it now
-    return ChatOpenAI(
-        temperature=0,
-        model="gpt-4-turbo-preview",
-        max_tokens=1024
-    )
-
 
 # Define the state type for the graph using TypedDict instead of Dict
 class GraphState(TypedDict, total=False):
@@ -166,95 +143,11 @@ def create_agent_node(state: Dict) -> Dict:
     if not vector_store:
         raise ValueError("No vector store found in state.")
     
-    # Use OpenAI for more powerful processing
-    llm = ChatOpenAI(
-        temperature=0,
-        model="gpt-4-turbo-preview",
-        max_tokens=1024
-    )
+    # Create QA agent using the imported function
+    agent_executor, conversation_history = create_qa_agent(vector_store)
     
-    # Increase k to get more context from the videos
-    retriever = vector_store.as_retriever(search_kwargs={"k": 8})
-    
-    # Create a QA chain that retrieves relevant information
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=retriever,
-        return_source_documents=True,
-        verbose=True
-    )
-    
-    # Create a wrapper function that enforces strict adherence to retrieved content
-    def strict_qa_tool(query):
-        """
-        Tool that ensures answers come only from video content.
-        
-        Args:
-            query (str): User's question
-            
-        Returns:
-            str: Answer based only on video content
-        """
-        try:
-            result = qa_chain.invoke({"query": query})
-            
-            # Check if any documents were retrieved
-            if not result.get("source_documents") or len(result.get("source_documents", [])) == 0:
-                return "I don't have information about this in the video content."
-            
-            # Return only the result without source documents to the user
-            return result["result"]
-        except Exception as e:
-            print(f"Error in QA tool: {e}")
-            return "I couldn't find specific information about that in the video content."
-    
-    # Create a tool for the agent to use
-    retrieval_tool = Tool(
-        name="video_transcript_qa",
-        func=strict_qa_tool,
-        description="ALWAYS use this tool to answer questions about the video content. This is the ONLY source of information you have."
-    )
-    
-    tools = [retrieval_tool]
-    
-    # Create a system prompt that enforces strict adherence to video content
-    system_prompt = """You are a specialized assistant that ONLY answers questions based on the transcripts of provided YouTube videos.
-
-CRITICAL RULES YOU MUST FOLLOW:
-1. You have NO knowledge beyond what is in the video transcripts.
-2. You can ONLY provide information that is EXPLICITLY mentioned in the video transcripts.
-3. If the information is not in the transcripts, you MUST respond with EXACTLY: "I don't have that information in the video content."
-4. You MUST use the video_transcript_qa tool for EVERY question without exception.
-5. NEVER make up information or use general knowledge.
-6. If asked about topics unrelated to the videos, respond with EXACTLY: "I can only answer questions about the content of the provided videos."
-7. Do not reference external sources, websites, or any information not in the videos.
-8. Do not offer opinions or interpretations beyond what is directly stated in the videos.
-
-Your ONLY purpose is to retrieve and provide information from the video transcripts."""
-    
-    # Create the prompt template for the agent
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        MessagesPlaceholder(variable_name="conversation_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
-    
-    # Create the OpenAI functions agent
-    agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
-    agent_executor = AgentExecutor(
-        agent=agent, 
-        tools=tools, 
-        verbose=True,
-        handle_parsing_errors=True,
-        max_iterations=3,
-        early_stopping_method="generate",
-        return_intermediate_steps=False
-    )
-    
-    # Create a new state dictionary with all previous keys plus the new one
-    return {**state, "agent": agent_executor, "conversation_history": []}
+    # Create a new state dictionary with all previous keys plus the new ones
+    return {**state, "agent": agent_executor, "conversation_history": conversation_history}
 
 def build_graph_and_agent(urls):
     """
@@ -301,88 +194,98 @@ def main():
     """
     Main function to run the CLI version of the YouTube QA Bot.
     """
-    # Get list of YouTube URLs
-    urls = []
-    print("Enter YouTube URLs (one per line, type 'done' when finished):")
+    print("\n=== YouTube QA Bot ===")
+    print("1. Process videos and ask questions")
+    print("2. Clear transcript cache")
+    print("3. Clear vector databases")
+    print("4. Clear all caches and databases")
+    print("5. Exit")
     
-    while True:
-        url = input()
-        if url.lower() in ['done', 'exit', 'quit']:
-            break
-        urls.append(url)
+    choice = input("\nEnter your choice (1-5): ")
     
-    if not urls:
-        print("No URLs provided. Exiting.")
-        return
-    
-    try:
-        # Create LangGraph builder with state schema
-        builder = StateGraph(GraphState)
+    if choice == "1":
+        # Get list of YouTube URLs
+        urls = []
+        print("Enter YouTube URLs (one per line, type 'done' when finished):")
         
-        # Add nodes to the graph
-        builder.add_node("process_videos", process_videos_node)
-        builder.add_node("store_embeddings", store_embeddings_node)
-        builder.add_node("create_agent", create_agent_node)
-        
-        # Connect nodes in the graph
-        builder.set_entry_point("process_videos")
-        builder.add_edge("process_videos", "store_embeddings")
-        builder.add_edge("store_embeddings", "create_agent")
-        
-        # Compile the graph
-        graph = builder.compile()
-        
-        # Execute the graph with the initial state
-        final_state = graph.invoke({"urls": urls})
-        
-        # Get the agent and conversation history from the final state
-        qa_agent = final_state["agent"]
-        conversation_history = final_state["conversation_history"]
-        
-        # Define system prompt to explain the task
-        system_prompt = """
-        Welcome to the Video QA Bot!
-        You can ask questions related to the content of the videos you provided.
-        To quit, just type 'exit'.
-        """
-        
-        print(system_prompt)
-        
-        # Main conversation loop
         while True:
-            # Get user query
-            query = get_user_query()
-            
-            # If user types 'exit', break out of the loop
-            if query.lower() == 'exit':
-                print("Goodbye!")
+            url = input()
+            if url.lower() in ['done', 'exit', 'quit']:
                 break
+            urls.append(url)
+        
+        if not urls:
+            print("No URLs provided. Exiting.")
+            return
+        
+        try:
+            # Create LangGraph builder with state schema
+            builder = StateGraph(GraphState)
             
-            # Update the conversation history with the new user query
-            conversation_history.append({"role": "user", "content": query})
+            # Add nodes to the graph
+            builder.add_node("process_videos", process_videos_node)
+            builder.add_node("store_embeddings", store_embeddings_node)
+            builder.add_node("create_agent", create_agent_node)
             
-            # Get response from the QA agent, including the conversation history
-            try:
-                response = qa_agent.invoke({
-                    "input": query,
-                    "conversation_history": conversation_history
-                })
+            # Connect nodes in the graph
+            builder.set_entry_point("process_videos")
+            builder.add_edge("process_videos", "store_embeddings")
+            builder.add_edge("store_embeddings", "create_agent")
+            
+            # Compile the graph
+            graph = builder.compile()
+            
+            # Execute the graph with the initial state
+            final_state = graph.invoke({"urls": urls})
+            
+            # Get the agent and conversation history from the final state
+            qa_agent = final_state["agent"]
+            conversation_history = final_state["conversation_history"]
+            
+            # Define system prompt to explain the task
+            system_prompt = """
+            Welcome to the Video QA Bot!
+            You can ask questions related to the content of the videos you provided.
+            To quit, just type 'exit'.
+            """
+            
+            print(system_prompt)
+            
+            # Main conversation loop
+            while True:
+                # Get user query
+                query = get_user_query()
                 
-                # Print the answer
-                if "output" in response:
-                    print(f"\nAnswer: {response['output']}\n")
-                else:
-                    print(f"\nAnswer: {response}\n")
+                # If user types 'exit', break out of the loop
+                if query.lower() == 'exit':
+                    print("Goodbye!")
+                    break
                 
-                # Update the conversation history with the agent's response
-                conversation_history.append({"role": "assistant", "content": response['output']})
-            except Exception as e:
-                print(f"\nError getting response: {e}\n")
-                print("Please try a different question.")
-            
-    except Exception as e:
-        print(f"Error in processing: {e}")
-        print("Please try different video URLs.")
+                # Update the conversation history with the new user query
+                conversation_history.append({"role": "user", "content": query})
+                
+                # Get response from the QA agent, including the conversation history
+                try:
+                    response = qa_agent.invoke({
+                        "input": query,
+                        "conversation_history": conversation_history
+                    })
+                    
+                    # Print the answer
+                    if "output" in response:
+                        print(f"\nAnswer: {response['output']}\n")
+                    else:
+                        print(f"\nAnswer: {response}\n")
+                    
+                    # Update the conversation history with the agent's response
+                    conversation_history.append({"role": "assistant", "content": response['output']})
+                except Exception as e:
+                    print(f"\nError getting response: {e}\n")
+                    print("Please try a different question.")
+                
+        except Exception as e:
+            print(f"Error in processing: {e}")
+            print("Please try different video URLs.")
 
 if __name__ == "__main__":
     main()

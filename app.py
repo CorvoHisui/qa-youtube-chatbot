@@ -1,7 +1,10 @@
 import streamlit as st
 from tools.utils import fetch_video_metadata
 from main import build_graph_and_agent
+from tools.youtube_tool import clear_transcript_cache
 import os
+import shutil  # Add this import
+from tools.chromadb_tool import clear_all_databases
 
 # Set up the page configuration
 st.set_page_config(page_title="YouTube QA Bot", page_icon="🎥")
@@ -149,4 +152,98 @@ if st.session_state.agent:
                 role, message = history[i]
                 st.markdown(f"**{role.capitalize()}:** {message}")
                 st.markdown("---")
+
+# Add a sidebar for maintenance options
+with st.sidebar:
+    st.header("Maintenance")
+    
+    # Add imports at the top of the file
+    # import gc, time (already added above)
+    
+    # Add the restart button at the top of the maintenance section
+    if st.button("Restart App"):
+        # Clear session state
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+        # Rerun the app
+        st.rerun()
+    
+    if st.button("Clear Transcript Cache"):
+        cleared = clear_transcript_cache()
+        if cleared:
+            st.success("Transcript cache cleared successfully!")
+        else:
+            st.info("No transcript cache found to clear.")
+    
+    if st.button("Clear Vector Databases"):
+        # Get the absolute path to the db directory
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db")
+        
+        if os.path.exists(db_path):
+            try:
+                # First, try to release any open file handles by forcing garbage collection
+                import gc
+                gc.collect()
+                
+                # Add a small delay to allow file handles to be released
+                import time
+                time.sleep(1)
+                
+                # Now try to remove the directory
+                shutil.rmtree(db_path)
+                st.success("Vector databases cleared successfully!")
+                
+                # Add a note about restarting the app
+                st.info("For complete cleanup, you may need to restart the Streamlit app.")
+            except Exception as e:
+                st.error(f"Error clearing databases: {e}")
+                st.info("The database files are currently in use. Please restart the Streamlit app to fully clear the database.")
+        else:
+            st.info("No vector databases found to clear.")
+            
+    if st.button("Clear All Caches and Databases"):
+        cache_cleared = clear_transcript_cache()
+        
+        # Get the absolute path to the db directory
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db")
+        db_cleared = False
+        
+        if os.path.exists(db_path):
+            try:
+                # First, try to release any open file handles by forcing garbage collection
+                import gc
+                gc.collect()
+                
+                # Add a small delay to allow file handles to be released
+                import time
+                time.sleep(1)
+                
+                # Now try to remove the directory
+                shutil.rmtree(db_path)
+                db_cleared = True
+                
+                # Add a note about restarting the app
+                st.info("For complete cleanup, you may need to restart the Streamlit app.")
+            except Exception as e:
+                st.error(f"Error clearing databases: {e}")
+                st.info("The database files are currently in use. Please restart the Streamlit app to fully clear the database.")
+        
+        if cache_cleared and db_cleared:
+            st.success("All caches and databases cleared successfully!")
+        elif cache_cleared:
+            st.success("Transcript cache cleared successfully!")
+            if os.path.exists(db_path):
+                st.info("Database files are in use. Restart the app to clear them.")
+            else:
+                st.info("No vector databases found to clear.")
+        elif db_cleared:
+            st.success("Vector databases cleared successfully!")
+            st.info("No transcript cache found to clear.")
+        else:
+            st.info("No caches or databases found to clear.")
 

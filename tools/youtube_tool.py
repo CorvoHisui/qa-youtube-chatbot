@@ -1,6 +1,7 @@
 import os
 import json
 from youtube_transcript_api import YouTubeTranscriptApi
+from tools.utils import extract_video_id
 
 # File to cache transcripts to avoid repeated API calls
 CACHE_FILE = "transcript_cache.json"
@@ -11,20 +12,6 @@ if os.path.exists(CACHE_FILE):
         transcript_cache = json.load(f)
 else:
     transcript_cache = {}
-
-def get_video_id(url):
-    """
-    Extract the video ID from a YouTube URL.
-    
-    Args:
-        url (str): YouTube URL
-        
-    Returns:
-        str: YouTube video ID or None if not found
-    """
-    import re
-    match = re.search(r"v=([\w-]+)", url)
-    return match.group(1) if match else None
 
 def get_youtube_transcript(url):
     """
@@ -37,7 +24,11 @@ def get_youtube_transcript(url):
     Returns:
         list: List of transcript text segments
     """
-    video_id = get_video_id(url)
+    video_id = extract_video_id(url)
+    if not video_id:
+        print(f"Could not extract video ID from URL: {url}")
+        return []
+        
     if video_id in transcript_cache:
         print(f"[Cache] Transcript for {video_id} loaded from cache.")
         return transcript_cache[video_id]
@@ -58,3 +49,21 @@ def get_youtube_transcript(url):
     except Exception as e:
         print(f"Error getting transcript: {e}")
         return []
+
+def clear_transcript_cache():
+    """
+    Clear the transcript cache file.
+    
+    Returns:
+        bool: True if cache was cleared, False if no cache was found
+    """
+    if os.path.exists(CACHE_FILE):
+        os.remove(CACHE_FILE)
+        print("Transcript cache cleared.")
+        # Reset the in-memory cache as well
+        global transcript_cache
+        transcript_cache = {}
+        return True
+    else:
+        print("No transcript cache found.")
+        return False
