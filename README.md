@@ -14,10 +14,10 @@ A chatbot that answers questions about YouTube videos based on their transcripts
 1. Clone the repository
 2. Install dependencies: pip install -r requirements.txt
 3. Create a `.env` file with the following variables:
-        OPENAI_API_KEY=your_openai_api_key
-        LANGCHAIN_API_KEY=your_langchain_api_key
-        LANGCHAIN_PROJECT=your_langchain_project
-        YOUTUBE_API_KEY=your_youtube_api_key
+   - OPENAI_API_KEY=your_openai_api_key
+   - LANGCHAIN_API_KEY=your_langchain_api_key
+   - LANGCHAIN_PROJECT=your_langchain_project
+   - YOUTUBE_API_KEY=your_youtube_api_key
 
 
 ## Usage
